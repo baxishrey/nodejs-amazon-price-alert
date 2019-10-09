@@ -3,6 +3,8 @@ const $ = require('cheerio');
 const express = require('express');
 const bodyParser = require('body-parser');
 
+const serverless = require('serverless-http');
+
 const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -30,13 +32,11 @@ app.post('/price-match', (req, res) => {
       price = price.replace(/[\u20B9]/g, '').trim();
       var floatPrice = parseFloat(price.replace(',', ''));
 
-      res.send({ title, floatPrice });
+      res.send({ title, currentPrice: floatPrice });
     })
     .catch(err => {
       res.status(400).send(err);
     });
 });
 
-app.listen(port, () => {
-  console.log(`Server started on port ${port}`);
-});
+module.exports.handler = serverless(app);
