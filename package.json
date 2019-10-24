@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "dev:sls": "serverless offline start",
+    "debug": "export SLS_DEBUG=* && node --inspect /usr/bin/serverless offline -s dev"
   },
   "keywords": [],
   "author": "",

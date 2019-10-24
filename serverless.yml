@@ -66,6 +66,9 @@ functions:
       - http:
           path: price-match
           method: post
+      - http:
+          path: user/{username}/items
+          method: get
 #      - websocket: $connect
 #      - s3: ${env:BUCKET}
 #      - schedule: rate(10 minutes)
