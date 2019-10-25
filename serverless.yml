@@ -64,11 +64,14 @@ functions:
     #    Check the event documentation for details
     events:
       - http:
-          path: price-match
+          path: track-item
           method: post
       - http:
           path: user/{username}/items
           method: get
+      - http:
+          path: user/{username}/items/delete/{id}
+          method: delete
 #      - websocket: $connect
 #      - s3: ${env:BUCKET}
 #      - schedule: rate(10 minutes)
