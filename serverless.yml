@@ -72,6 +72,9 @@ functions:
       - http:
           path: user/{username}/items/delete/{id}
           method: delete
+      - http:
+          path: user/{username}/items/update/{id}
+          method: put
 #      - websocket: $connect
 #      - s3: ${env:BUCKET}
 #      - schedule: rate(10 minutes)

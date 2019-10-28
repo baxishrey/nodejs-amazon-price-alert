@@ -18,31 +18,33 @@ router.get('/user/:username/items', (req, res) => {
       if (item) {
         const tracked_items = Array.from(item.tracked_items);
         const promiseList = tracked_items.map(ti => {
-          return rp(ti.url);
+          return rp(ti.url, { gzip: true });
         });
-        Promise.all(promiseList).then(htmls => {
-          const retVal = htmls.map((html, index) => {
-            var title = $('#productTitle', html)
-              .text()
-              .trim();
+        Promise.all(promiseList)
+          .then(htmls => {
+            const retVal = htmls.map((html, index) => {
+              var title = $('[id=productTitle]', html)
+                .text()
+                .trim();
 
-            var price = $(
-              '[id=priceblock_ourprice],[id=priceblock_dealprice]',
-              html
-            )
-              .text()
-              .trim();
-            price = price.replace(/[\u20B9]/g, '').trim();
-            var currentPrice = parseFloat(price.replace(',', ''));
-            return {
-              id: tracked_items[index].id,
-              title: title,
-              currentPrice: currentPrice,
-              targetPrice: tracked_items[index].targetPrice
-            };
-          });
-          res.send(retVal);
-        });
+              var price = $(
+                '[id=priceblock_ourprice],[id=priceblock_dealprice]',
+                html
+              )
+                .text()
+                .trim();
+              price = price.replace(/[\u20B9]/g, '').trim();
+              var currentPrice = parseFloat(price.replace(',', ''));
+              return {
+                id: tracked_items[index].id,
+                title: title,
+                currentPrice: currentPrice,
+                targetPrice: tracked_items[index].targetPrice
+              };
+            });
+            res.send(retVal);
+          })
+          .catch(err => res.status(400).send(err));
       } else {
         res.status(400).send('No tracked items found for this user');
       }
@@ -94,6 +96,42 @@ router.post('/track-item', (req, res) => {
       console.log('Error in fetching', err);
       res.status(400).send(err);
     });
+});
+
+router.put('/user/:username/items/update/:id', (req, res) => {
+  const { username, id } = req.params;
+  const { newTargetPrice } = req.body;
+  if (!id) {
+    res.status(400).send('Enter user Id');
+  }
+  if (!newTargetPrice) {
+    return res.status(400).send('Enter new target price');
+  }
+  getUser(username)
+    .then(
+      data => {
+        const user = data.Item;
+        if (!user) {
+          res.status(400).send('User not found');
+        } else {
+          const tracked_items = Array.from(user.tracked_items);
+          const itemToUpdate = tracked_items.find(ti => ti.id === id);
+          if (!itemToUpdate) {
+            res.status(400).send('Item not found');
+          } else {
+            itemToUpdate.targetPrice = parseInt(newTargetPrice);
+            const index = tracked_items.indexOf(itemToUpdate);
+            tracked_items[index] = itemToUpdate;
+            return Promise.resolve(updateEntry(username, tracked_items));
+          }
+        }
+      },
+      err => {
+        throw new Error(err);
+      }
+    )
+    .then(data => res.send(data))
+    .catch(err => res.status(400).send(err));
 });
 
 router.delete('/user/:username/items/delete/:id', (req, res) => {
