@@ -10,6 +10,7 @@ const docClient = new AWS.DynamoDB.DocumentClient({ apiVersion: '2012-08-10' });
 
 const tableName = 'user-price-items';
 
+// GET
 router.get('/user/:username/items', (req, res) => {
   const { username } = req.params;
   getUser(username).then(
@@ -55,6 +56,7 @@ router.get('/user/:username/items', (req, res) => {
   );
 });
 
+// POST
 router.post('/track-item', (req, res) => {
   const url = req.body.url;
   const targetPrice = req.body.targetPrice;
@@ -98,6 +100,7 @@ router.post('/track-item', (req, res) => {
     });
 });
 
+// PUT
 router.put('/user/:username/items/update/:id', (req, res) => {
   const { username, id } = req.params;
   const { newTargetPrice } = req.body;
@@ -134,6 +137,7 @@ router.put('/user/:username/items/update/:id', (req, res) => {
     .catch(err => res.status(400).send(err));
 });
 
+// DELETE
 router.delete('/user/:username/items/delete/:id', (req, res) => {
   const { username, id } = req.params;
   if (!id) {
