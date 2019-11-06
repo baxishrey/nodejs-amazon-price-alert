@@ -7,6 +7,11 @@ const rp = require('request-promise');
 const AWS = require('aws-sdk');
 // AWS.config.update({ region: 'REGION' });
 const docClient = new AWS.DynamoDB.DocumentClient({ apiVersion: '2012-08-10' });
+const ecs = new AWS.ECS();
+
+const cluster = 'node-price-alert-cluster';
+const taskDefinition = 'node-price-alert-task-definition';
+const launchType = 'FARGATE';
 
 const tableName = 'user-price-items';
 
@@ -57,7 +62,7 @@ router.get('/user/:username/items', (req, res) => {
 });
 
 // POST
-router.post('/track-item', (req, res) => {
+router.post('/track-item', async (req, res) => {
   const url = req.body.url;
   const targetPrice = req.body.targetPrice;
   const username = req.body.username;
@@ -73,35 +78,43 @@ router.post('/track-item', (req, res) => {
   if (!username) {
     return res.status(400).send('Username is required');
   }
-
-  getUser(username)
-    .then(data => {
-      if (!data.Item) {
-        const newEntry = {
-          id: uuid(),
-          username,
-          url,
-          targetPrice: parseInt(targetPrice)
-        };
-        return Promise.resolve(addNewEntry(newEntry));
-      } else {
-        let tracked_items = data.Item.tracked_items;
-        const price = parseInt(targetPrice);
-        tracked_items.push({ id: uuid(), url, targetPrice: price });
-        return Promise.resolve(updateEntry(username, tracked_items));
-      }
-    })
-    .then(data => {
+  let userData;
+  try {
+    userData = await getUser(username);
+    if (!userData.Item) {
+      const runTaskReponse = await startEcsTask(url, parseInt(targetPrice));
+      const runningTaskId = runTaskReponse.tasks[0].taskArn;
+      const newEntry = {
+        id: uuid(),
+        username,
+        url,
+        targetPrice: parseInt(targetPrice),
+        runningTaskId
+      };
+      const newEntryInDb = await addNewEntry(newEntry);
+      res.send(newEntryInDb);
+    } else {
+      let tracked_items = userData.Item.tracked_items;
+      const price = parseInt(targetPrice);
+      const runTaskReponse = await startEcsTask(url, price);
+      const runningTaskId = runTaskReponse.tasks[0].taskArn;
+      tracked_items.push({
+        id: uuid(),
+        url,
+        targetPrice: price,
+        runningTaskId
+      });
+      const data = await updateEntry(username, tracked_items);
       res.send(data);
-    })
-    .catch(err => {
-      console.log('Error in fetching', err);
-      res.status(400).send(err);
-    });
+    }
+  } catch (err) {
+    console.log('Error in fetching', err);
+    res.status(400).send(err);
+  }
 });
 
 // PUT
-router.put('/user/:username/items/update/:id', (req, res) => {
+router.put('/user/:username/items/update/:id', async (req, res) => {
   const { username, id } = req.params;
   const { newTargetPrice } = req.body;
   if (!id) {
@@ -110,62 +123,69 @@ router.put('/user/:username/items/update/:id', (req, res) => {
   if (!newTargetPrice) {
     return res.status(400).send('Enter new target price');
   }
-  getUser(username)
-    .then(
-      data => {
-        const user = data.Item;
-        if (!user) {
-          res.status(400).send('User not found');
-        } else {
-          const tracked_items = Array.from(user.tracked_items);
-          const itemToUpdate = tracked_items.find(ti => ti.id === id);
-          if (!itemToUpdate) {
-            res.status(400).send('Item not found');
-          } else {
-            itemToUpdate.targetPrice = parseInt(newTargetPrice);
-            const index = tracked_items.indexOf(itemToUpdate);
-            tracked_items[index] = itemToUpdate;
-            return Promise.resolve(updateEntry(username, tracked_items));
-          }
-        }
-      },
-      err => {
-        throw new Error(err);
+  try {
+    const data = await getUser(username);
+    const user = data.Item;
+    if (!user) {
+      res.status(400).send('User not found');
+    } else {
+      const tracked_items = Array.from(user.tracked_items);
+      const itemToUpdate = tracked_items.find(ti => ti.id === id);
+      if (!itemToUpdate) {
+        res.status(400).send('Item not found');
+      } else {
+        // Stop running task
+        await stopEcsTask(itemToUpdate.runningTaskId);
+        // Run new task
+        const url = itemToUpdate.url;
+        const targetPriceInt = parseInt(newTargetPrice);
+        const runTaskReponse = await startEcsTask(url, targetPriceInt);
+        const runningTaskId = runTaskReponse.tasks[0].taskArn;
+
+        // Update DB entry
+        itemToUpdate.targetPrice = targetPriceInt;
+        itemToUpdate.runningTaskId = runningTaskId;
+        const index = tracked_items.indexOf(itemToUpdate);
+        tracked_items[index] = itemToUpdate;
+        const data = await updateEntry(username, tracked_items);
+        res.send(data);
       }
-    )
-    .then(data => res.send(data))
-    .catch(err => res.status(400).send(err));
+    }
+  } catch (err) {
+    res.status(400).send(err);
+  }
 });
 
 // DELETE
-router.delete('/user/:username/items/delete/:id', (req, res) => {
+router.delete('/user/:username/items/delete/:id', async (req, res) => {
   const { username, id } = req.params;
   if (!id) {
     res.status(400).send('Enter user Id');
   }
-  getUser(username)
-    .then(
-      data => {
-        const user = data.Item;
-        if (!user) {
-          res.status(400).send('User not found');
-        } else {
-          const tracked_items = Array.from(user.tracked_items);
-          const itemToDelete = tracked_items.find(ti => ti.id === id);
-          if (!itemToDelete) {
-            res.status(400).send('Item not found');
-          } else {
-            const new_tracked_items = tracked_items.filter(ti => ti.id !== id);
-            return Promise.resolve(updateEntry(username, new_tracked_items));
-          }
-        }
-      },
-      err => {
-        throw new Error(err);
+  try {
+    const data = await getUser(username);
+    const user = data.Item;
+    if (!user) {
+      res.status(400).send('User not found');
+    } else {
+      const tracked_items = Array.from(user.tracked_items);
+      const itemToDelete = tracked_items.find(ti => ti.id === id);
+      if (!itemToDelete) {
+        res.status(400).send('Item not found');
+      } else {
+        // Stop running task
+        const runningTaskId = itemToDelete.runningTaskId;
+        await stopEcsTask(runningTaskId);
+
+        // Remove entry from DB
+        const new_tracked_items = tracked_items.filter(ti => ti.id !== id);
+        const data = await updateEntry(username, new_tracked_items);
+        res.send(data);
       }
-    )
-    .then(data => res.send(data))
-    .catch(err => res.status(400).send(err));
+    }
+  } catch (err) {
+    res.status(400).send(err);
+  }
 });
 
 function getUser(username) {
@@ -207,6 +227,42 @@ function updateEntry(username, updatedEntry) {
     ReturnValues: 'UPDATED_NEW'
   };
   return docClient.update(updateParams).promise();
+}
+
+function startEcsTask(url, targetPrice) {
+  const runTaskParams = {
+    cluster: cluster,
+    taskDefinition: taskDefinition,
+    launchType: launchType,
+    networkConfiguration: {
+      awsvpcConfiguration: {
+        subnets: ['subnet-0fda27a45e1443f69'],
+        assignPublicIp: 'ENABLED'
+      }
+    },
+    overrides: {
+      containerOverrides: [
+        {
+          name: 'node-price-alert-container',
+          environment: [
+            { name: 'url', value: url },
+            { name: 'targetPrice', value: targetPrice.toString() },
+            { name: 'NODE_ENV', value: 'production' }
+          ]
+        }
+      ]
+    }
+  };
+  return ecs.runTask(runTaskParams).promise();
+}
+
+function stopEcsTask(taskArn) {
+  const stopTaskParams = {
+    task: taskArn,
+    cluster: cluster
+  };
+
+  return ecs.stopTask(stopTaskParams).promise();
 }
 
 module.exports = router;
